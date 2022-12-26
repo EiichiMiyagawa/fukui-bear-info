@@ -1,0 +1,342 @@
+<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+  <title>福井くまグラフ</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/dayjs/1.11.6/dayjs.min.js"></script>
+</head><body>
+  <h1 id=title></h1>
+  <div id=prefbox></div>
+  <div id=divsels></div>
+  <div id=divpie></div>
+  <hr />
+  <a href="https://tsukinowaguma.pref.fukui.lg.jp/" target="_blank">データ元</a>
+  (<a href="https://eiichimiyagawa.github.io/fukui-bear-info/bear.json" target="_blank">data</a>, <a href="https://github.com/EiichiMiyagawa/fukui-bear-info" target="_blank">src</a>)<br>
+</div>
+
+<script type="module">
+  import { ChartPie } from "./ChartPie.js";
+  import { ChartBar } from "https://eiichimiyagawa.github.io/chart-bar-plotly/chart-bar.js";
+  import { SurveySelector } from "./survey-selector.js";
+  
+  // iOS14以前に関する対応（top-level await未対応のため）
+  addEventListener("load", async () => {
+    title.textContent = document.title;
+    const surveySelector = new SurveySelector();
+    
+    const surveys = {
+      "SICHO": {
+        name: "市町村",
+        selectCode: {
+          "福井市": 182010,
+          "敦賀市": 182028,
+          "小浜市": 182044,
+          "大野市": 182052,
+          "勝山市": 182061,
+          "鯖江市": 182079,
+          "あわら市": 182087,
+          "越前市": 182095,
+          "坂井市": 182109,
+          "永平寺": 183229,
+          "池田町": 183822,
+          "南越前町": 184047,
+          "越前町": 184233,
+          "美浜町": 184420,
+          "高浜町": 184811,
+          "おおい町": 184837,
+          "若狭町": 185019
+        }
+      },
+      "SHUBETU": {
+        name: "種別",
+        selectCode: {
+          "目撃": 1,
+          "痕跡": 2,
+          "人身被害": 4
+        }
+      }
+    };
+    
+    const sortSelectCodes= ((name, codes) => {
+      return codes.sort((c1, c2) => {
+        if (surveys[name]["selectCode"][c1] < surveys[name]["selectCode"][c2]) {
+          return -1;
+        }
+        
+        if (surveys[name]["selectCode"][c1] > surveys[name]["selectCode"][c2]) {
+          return 1;
+        }
+        
+        return 0;
+      });
+    });
+    
+    const url = "./bear.json";
+    const bearData = await (await fetch(url)).json();
+    
+    // チャートの種類
+    const chartType = {
+      "pie": "円グラフ",
+      "bar": "棒グラフ"
+    }
+    
+    // 各チャートの情報
+    const charts = {
+      "SICHO": {
+        type: chartType["pie"]
+      },
+      "SHUBETU": {
+        type: chartType["bar"]
+      }
+    };
+    
+    const sortData = (key, obj) => {
+      const names = sortSelectCodes(key, Object.keys(obj));
+      const res = {};
+      for (const name of names) {
+        res[name] = obj[name];
+      }
+      return res;
+    };
+    
+    const onChangeChartSelect = (title, index, event) => {
+      charts[title]["type"] = event.target.value;
+      changeChart(title, index);
+    };
+    
+    const changeChart = (title, index) => {
+      const chartPie = document.getElementById("chart-pie" + index);
+      const chartBar = document.getElementById("chart-bar" + index);
+      
+      switch (charts[title]["type"]) {
+        case chartType["pie"]:
+        chartPie.style.display = "inline-block";
+        chartBar.style.display = "none";
+        break;
+        case chartType["bar"]:
+        chartPie.style.display = "none";
+        chartBar.style.display = "inline-block";
+        break;
+        default:
+        break;
+      }
+    };
+    
+    const show = () => {
+      divpie.innerHTML = "";
+      
+      const filter = ((data) => {
+        const node2array = (nodes) => {
+          const res = [];
+          for (const n of nodes) {
+            res.push(n);
+          }
+          return res;
+        };
+        
+        const generateKeys = (selectedOptions) => {
+          const keys = [];
+          for (let i = 0; i < selectedOptions.length; i++) {
+            keys.push(selectedOptions[i].value);
+          }
+          // 空要素は削除
+          return keys.filter(Boolean);
+        };
+        
+        const keys = node2array(divsels.querySelectorAll("select")).map(s => [s.dataname, generateKeys(s.selectedOptions)]);
+        const fromDate = surveySelector.getFromDate();
+        const toDate = surveySelector.getToDate();
+        
+        return bearData.filter(d => {
+          const answerDate = dayjs(d["HIDUKE"]).hour(0).minute(0).second(0);
+          if (answerDate < fromDate || answerDate > toDate ) {
+            return false;
+          }
+          
+          for (const key of keys) {
+            if (key[1].length != 0) {
+              if (!key[1].includes(d[key[0]])) {
+                return false;
+              }
+            }
+          }
+          
+          return true;
+        });
+      });
+      const bearData2 = filter(bearData);
+      
+      if (bearData2.length) {
+        const monthData = {
+          "成獣": {},
+          "幼獣": {},
+          "不明": {}
+        };
+        const fromDate = surveySelector.getFromDate();
+        const toDate = surveySelector.getToDate().endOf("month");
+        for (let from = fromDate; from <= toDate; from = from.add(1, "month")) {
+          const value = `${from.year()}/${(from.month() + 1).toString().padStart(2, "0")}`;
+          monthData["成獣"][value] = 0;
+          monthData["幼獣"][value] = 0;
+          monthData["不明"][value] = 0;
+        }
+        for (const d of bearData2) {
+          const v = d["HIDUKE"].slice(0, 7);
+          
+          if (Number(d["KOTAISEI"]) > 0) {
+            monthData["成獣"][v]++;
+          }
+          if (Number(d["KOTAIYOU"]) > 0) {
+            monthData["幼獣"][v]++;
+          }
+          if (Number(d["KOTAIHU"]) > 0 || (Number(d["KOTAISEI"]) == 0 && Number(d["KOTAIYOU"]) == 0 && Number(d["KOTAIHU"]) == 0)) {
+            monthData["不明"][v]++;
+          }
+        }
+        const monthData2 = Object.keys(monthData).map((key) => {
+          const obj = {}
+          obj[key] = monthData[key];
+          return obj;
+        });
+        const chartBar = new ChartBar(monthData2, {
+          width: window.innerWidth - 50,
+          height: 300
+        });
+        const span = document.createElement("span");
+        span.textContent = `月間データ(${bearData2.length}件)`;
+        divpie.append(span);
+        divpie.append(chartBar);
+        
+        const names = Object.keys(charts);
+        names.forEach((name, index) => {
+          const pieData = {};
+          const barData = {
+            "成獣": {},
+            "幼獣": {},
+            "不明": {}
+          };
+          for (const d of bearData2) {
+            const v = d[name];
+            if (!pieData[v]) {
+              pieData[v] = 1;
+            } else {
+              pieData[v]++;
+            }
+            
+            if (Number(d["KOTAISEI"]) > 0) {
+              if (!barData["成獣"][v]) {
+                barData["成獣"][v] = 0;
+              }
+              barData["成獣"][v]++;
+            }
+            if (Number(d["KOTAIYOU"]) > 0) {
+              if (!barData["幼獣"][v]) {
+                barData["幼獣"][v] = 0;
+              }
+              barData["幼獣"][v]++;
+            }
+            if (Number(d["KOTAIHU"]) > 0 || (Number(d["KOTAISEI"]) == 0 && Number(d["KOTAIYOU"]) == 0 && Number(d["KOTAIHU"]) == 0)) {
+              if (!barData["不明"][v]) {
+                barData["不明"][v] = 0;
+              }
+              barData["不明"][v]++;
+            }
+          }
+          const pieData2 = sortData(name, pieData);
+          const barData2 = Object.keys(barData).map((key) => {
+            const obj = {}
+            obj[key] = sortData(name, barData[key]);
+            return obj;
+          });
+          const chartPie = new ChartPie(pieData2);
+          chartPie.id = "chart-pie" + index;
+          const chartBar = new ChartBar(barData2);
+          chartBar.id = "chart-bar" + index;
+          const div2 = document.createElement("div");
+          div2.style.display = "inline-block";
+          const span = document.createElement("span");
+          span.textContent = `${surveys[name].name}(${bearData2.length}件)`;
+          const chartSelect = document.createElement("select");
+          chartSelect.onchange = onChangeChartSelect.bind(null, name, index);
+          for (const key in chartType) {
+            const opt = document.createElement("option");
+            opt.textContent = chartType[key];
+            if (charts[name]["type"] == chartType[key]) {
+              opt.selected = true;
+            }
+            chartSelect.appendChild(opt);
+          };
+          span.appendChild(document.createElement("br"));
+          span.appendChild(chartSelect);
+          div2.appendChild(span);
+          div2.appendChild(document.createElement("br"));
+          div2.appendChild(chartPie);
+          div2.appendChild(chartBar);
+          divpie.append(div2);
+          changeChart(name, index);
+        });
+        
+      };
+    };
+    
+    const sels = Object.keys(surveys);
+    for (const sel of sels) {
+      const box = document.createElement("span");
+      box.style.display = "inline-block";
+      const txt = document.createElement("span");
+      txt.textContent = surveys[sel].name;
+      box.appendChild(txt);
+      box.appendChild(document.createElement("br"));
+      const s = document.createElement("select");
+      s.setAttribute("multiple", true);
+      s.appendChild(document.createElement("option"));
+      const names = sortSelectCodes(sel, Object.keys(surveys[sel].selectCode));
+      names.forEach(name => {
+        if (!name) {
+          return;
+        }
+        const opt = document.createElement("option");
+        opt.textContent = name;
+        s.appendChild(opt);
+      });
+      box.appendChild(s);
+      divsels.appendChild(box);
+      s.dataname = sel;
+      s.onchange = show;
+    }
+    
+    divsels.appendChild(document.createElement("br"));
+    
+    const from = dayjs().subtract(1, "year");
+    const to = dayjs();
+    surveySelector.createDateInputElement(divsels, {
+      title: "開始日",
+      elementId: "fromDate",
+      date: from.format("YYYY-MM-DD"),
+      onChange: show
+    });
+    surveySelector.createDateInputElement(divsels, {
+      title: "終了日",
+      elementId: "toDate",
+      date: to.format("YYYY-MM-DD"),
+      onChange: show
+    });
+    
+    show();
+  });
+  
+</script>
+
+<style>
+  body {
+    text-align: center;
+    font-family: sans-serif;
+  }
+  textarea {
+    width: 70vw;
+    height: 8em;
+  }
+  #divsels {
+    margin-bottom: .5em;
+  }
+  #prefbox > * {
+    margin: .5em .2em;
+  }
+</style>
